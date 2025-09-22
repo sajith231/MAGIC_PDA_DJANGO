@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-SyncService - Django Project Runner
+SyncService - Django Project Runner with Auto Setup
 This script starts the Django project and displays terminal output with project status
+Includes automatic environment setup and dependency checking
 """
 
 import os
@@ -14,6 +15,111 @@ import signal
 import re
 from datetime import datetime
 from pathlib import Path
+
+def check_and_setup_environment():
+    """Check if virtual environment exists and dependencies are installed"""
+    script_dir = Path(__file__).parent
+    venv_dir = script_dir / "venv"
+    
+    # Check if virtual environment exists
+    if not venv_dir.exists():
+        print("🔧 Virtual environment not found. Setting up environment...")
+        print("📋 This may take a few minutes on first run...")
+        
+        # Check if Python is available
+        try:
+            result = subprocess.run([sys.executable, "--version"], 
+                                 capture_output=True, text=True, check=True)
+            print(f"🐍 Python found: {result.stdout.strip()}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("❌ Python not found. Please install Python 3.8+ and try again.")
+            input("Press Enter to exit...")
+            sys.exit(1)
+        
+        # Check if requirements.txt exists
+        requirements_file = script_dir / "requirements.txt"
+        if not requirements_file.exists():
+            print("❌ requirements.txt not found!")
+            print("🛠️  Creating basic requirements.txt...")
+            with open(requirements_file, 'w') as f:
+                f.write("Django>=4.2.0,<5.0\n")
+                f.write("sqlanydb>=1.0.0\n")
+                f.write("requests>=2.28.0\n")
+                f.write("python-dateutil>=2.8.0\n")
+                f.write("pytz>=2023.3\n")
+            print("✅ Basic requirements.txt created")
+        
+        # Create virtual environment
+        print("🔨 Creating virtual environment...")
+        try:
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], 
+                         check=True, cwd=script_dir)
+            print("✅ Virtual environment created")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to create virtual environment: {e}")
+            input("Press Enter to exit...")
+            sys.exit(1)
+        
+        # Determine pip path
+        if sys.platform == "win32":
+            pip_exe = venv_dir / "Scripts" / "pip.exe"
+            python_exe = venv_dir / "Scripts" / "python.exe"
+        else:
+            pip_exe = venv_dir / "bin" / "pip"
+            python_exe = venv_dir / "bin" / "python"
+        
+        # Upgrade pip
+        print("⬆️  Upgrading pip...")
+        try:
+            subprocess.run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"], 
+                         check=True, cwd=script_dir)
+            print("✅ Pip upgraded")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️  Pip upgrade failed: {e}")
+        
+        # Install requirements
+        print("📦 Installing dependencies...")
+        try:
+            subprocess.run([str(pip_exe), "install", "-r", "requirements.txt"], 
+                         check=True, cwd=script_dir)
+            print("✅ Dependencies installed successfully")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to install dependencies: {e}")
+            print("💡 Please check your requirements.txt file and internet connection")
+            input("Press Enter to exit...")
+            sys.exit(1)
+        
+        # Check if Django project needs setup
+        django_dir = script_dir / "django_sync"
+        if django_dir.exists():
+            manage_py = django_dir / "manage.py"
+            if manage_py.exists():
+                print("🗄️  Setting up Django database...")
+                try:
+                    # Run migrations
+                    subprocess.run([str(python_exe), str(manage_py), "makemigrations"], 
+                                 cwd=django_dir, check=False)
+                    subprocess.run([str(python_exe), str(manage_py), "migrate"], 
+                                 cwd=django_dir, check=False)
+                    print("✅ Django database setup complete")
+                except subprocess.CalledProcessError as e:
+                    print(f"⚠️  Django setup warning: {e}")
+        
+        print("🎉 Environment setup complete!")
+        print("-" * 60)
+    
+    # Verify virtual environment
+    if sys.platform == "win32":
+        python_exe = venv_dir / "Scripts" / "python.exe"
+    else:
+        python_exe = venv_dir / "bin" / "python"
+    
+    if not python_exe.exists():
+        print("❌ Virtual environment is corrupted. Please delete 'venv' folder and run again.")
+        input("Press Enter to exit...")
+        sys.exit(1)
+    
+    return str(python_exe)
 
 class SyncServiceRunner:
     def __init__(self):
@@ -54,29 +160,76 @@ class SyncServiceRunner:
         signal.signal(signal.SIGTERM, self.signal_handler)
     
     def load_config(self):
-        """Load configuration from config.json"""
+        """Load configuration from config.json and .env"""
         try:
+            # Load from config.json
             if self.config_file.exists():
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
+                    config = json.load(f)
+                    print(f"📄 Configuration loaded from {self.config_file}")
             else:
-                # Default configuration
-                return {
+                # Create default configuration
+                config = {
                     "ip": "192.168.1.53",
                     "port": 8000,
                     "dsn": "pktc",
                     "auto_start": True,
                     "log_level": "INFO",
-                    "all_ips": ["192.168.1.53", "172.25.240.1"]
+                    "all_ips": ["192.168.1.53", "172.25.240.1", "127.0.0.1"]
                 }
+                
+                # Try to detect local IP
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                    if local_ip not in config["all_ips"]:
+                        config["all_ips"].append(local_ip)
+                        config["ip"] = local_ip
+                except:
+                    pass
+                
+                # Save default config
+                with open(self.config_file, 'w') as f:
+                    json.dump(config, f, indent=2)
+                print(f"📝 Default configuration created at {self.config_file}")
+            
+            # Load environment variables from .env file
+            env_file = self.project_dir / ".env"
+            if env_file.exists():
+                print(f"📄 Loading environment variables from {env_file}")
+                with open(env_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            os.environ[key.strip()] = value.strip()
+            
+            # Add database credentials with fallback
+            config["db_uid"] = os.getenv("DB_UID", "dba")
+            config["db_pwd"] = os.getenv("DB_PWD", "(*$^)")
+            
+            return config
+            
         except Exception as e:
             print(f"❌ Error loading config: {e}")
-            return {}
+            return {
+                "ip": "127.0.0.1",
+                "port": 8000,
+                "dsn": "pktc",
+                "auto_start": True,
+                "log_level": "INFO",
+                "all_ips": ["127.0.0.1"],
+                "db_uid": "dba",
+                "db_pwd": "(*$^)"
+            }
     
     def print_banner(self):
         """Print application banner"""
         print("=" * 60)
-        print("🔄 SyncService - Django Project Runner")
+        print("🔄 SyncService - Django Project Runner v2.0")
         print("=" * 60)
         print(f"📁 Project Directory: {self.project_dir}")
         print(f"🐍 Django Directory: {self.django_dir}")
@@ -105,6 +258,7 @@ class SyncServiceRunner:
         
         if not all_good:
             print("❌ Some prerequisites are missing!")
+            print("💡 Make sure you have the complete project structure")
             return False
         
         print("✅ All prerequisites satisfied!")
@@ -113,25 +267,31 @@ class SyncServiceRunner:
     def start_sync_heartbeat(self):
         """Start the database heartbeat service"""
         def heartbeat_worker():
-            import sqlanydb
-            DSN = self.config.get('dsn', 'pktc')
-            
-            while self.running:
-                try:
-                    conn = sqlanydb.connect(DSN=DSN, UID="dba", PWD="(*$^)")
-                    cur = conn.cursor()
-                    cur.execute("SELECT 1")
-                    cur.close()
-                    conn.close()
-                    print(f"💓 DB heartbeat OK @ {datetime.now().strftime('%H:%M:%S')}")
-                except Exception as e:
-                    print(f"💔 Heartbeat failed: {e}")
+            # Try to import sqlanydb, skip if not available
+            try:
+                import sqlanydb
+                DSN = self.config.get('dsn', 'pktc')
                 
-                # Wait 30 seconds before next heartbeat
-                for _ in range(30):
-                    if not self.running:
-                        break
-                    time.sleep(1)
+                while self.running:
+                    try:
+                        conn = sqlanydb.connect(DSN=DSN, UID="dba", PWD="(*$^)")
+                        cur = conn.cursor()
+                        cur.execute("SELECT 1")
+                        cur.close()
+                        conn.close()
+                        print(f"💓 DB heartbeat OK @ {datetime.now().strftime('%H:%M:%S')}")
+                    except Exception as e:
+                        print(f"💔 Heartbeat failed: {e}")
+                    
+                    # Wait 30 seconds before next heartbeat
+                    for _ in range(30):
+                        if not self.running:
+                            break
+                        time.sleep(1)
+            
+            except ImportError:
+                print("⚠️  sqlanydb not available - skipping database heartbeat")
+                print("💡 Install SAP SQL Anywhere client if you need database connectivity")
         
         print("💓 Starting database heartbeat service...")
         heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
@@ -149,8 +309,23 @@ class SyncServiceRunner:
         manage_dir = self.manage_py.parent
         os.chdir(manage_dir)
         
+        # Use virtual environment Python if available
+        venv_dir = self.script_dir / "venv"
+        if venv_dir.exists():
+            if sys.platform == "win32":
+                python_exe = venv_dir / "Scripts" / "python.exe"
+            else:
+                python_exe = venv_dir / "bin" / "python"
+            
+            if python_exe.exists():
+                python_cmd = str(python_exe)
+            else:
+                python_cmd = sys.executable
+        else:
+            python_cmd = sys.executable
+        
         # Start Django server
-        cmd = [sys.executable, str(self.manage_py.name), "runserver", f"{ip}:{port}"]
+        cmd = [python_cmd, str(self.manage_py.name), "runserver", f"{ip}:{port}"]
         print(f"🔧 Command: {' '.join(cmd)}")
         print(f"📂 Working directory: {os.getcwd()}")
         
@@ -173,6 +348,7 @@ class SyncServiceRunner:
             
         except Exception as e:
             print(f"❌ Failed to start Django server: {e}")
+            print("💡 Make sure Django is installed and manage.py is accessible")
             return False
     
     def parse_http_status(self, line):
@@ -242,7 +418,7 @@ class SyncServiceRunner:
                 timestamp = datetime.now().strftime('%H:%M:%S')
                 
                 # Parse different types of application messages
-                if '📱 Pair check request from:' in line or '\\U0001f4f1 Pair check request from:' in line:
+                if 'Pair check request from:' in line or 'U0001f4f1 Pair check request from:' in line:
                     pair_count += 1
                     print(f"🔗 PAIR [{timestamp}]: Mobile device pairing request")
                     try:
@@ -251,7 +427,7 @@ class SyncServiceRunner:
                     except:
                         print(f"   📱 Device connected")
                 
-                elif '✅ SyncService started' in line or 'SyncService already running' in line:
+                elif 'SyncService started' in line or 'SyncService already running' in line:
                     success_count += 1
                     if 'already running' in line:
                         pid = line.split('PID ')[1].split(')')[0] if 'PID ' in line else 'Unknown'
@@ -259,22 +435,22 @@ class SyncServiceRunner:
                     else:
                         print(f"🚀 START [{timestamp}]: SyncService launched successfully")
                 
-                elif '🔐 Login attempt for user:' in line or '\\U0001f510 Login attempt for user:' in line:
+                elif 'Login attempt for user:' in line or 'U0001f510 Login attempt for user:' in line:
                     login_count += 1
                     user = line.split('user: ')[1] if 'user: ' in line else 'Unknown'
                     print(f"👤 LOGIN [{timestamp}]: User authentication attempt")
                     print(f"   🆔 User ID: {user}")
                 
-                elif '✅ Login successful' in line or '\\u2705 Login successful' in line:
+                elif 'Login successful' in line or 'u2705 Login successful' in line:
                     success_count += 1
                     print(f"✅ AUTH [{timestamp}]: Login completed successfully")
                 
-                elif '📤 Uploading' in line and 'orders' in line:
+                elif 'Uploading' in line and 'orders' in line:
                     upload_count += 1
                     order_count = line.split('Uploading ')[1].split(' orders')[0] if 'Uploading ' in line else '?'
                     print(f"📤 UPLOAD [{timestamp}]: Processing {order_count} order(s)")
                 
-                elif '📦 Raw JSON received:' in line:
+                elif 'Raw JSON received:' in line:
                     try:
                         # Extract order details from JSON
                         json_part = line.split('Raw JSON received: ')[1]
@@ -291,7 +467,7 @@ class SyncServiceRunner:
                     except:
                         print(f"   📦 Order data received")
                 
-                elif '📥 Data download request' in line or '\\U0001f4e5 Data download request' in line:
+                elif 'Data download request' in line or 'U0001f4e5 Data download request' in line:
                     print(f"📥 DOWNLOAD [{timestamp}]: Data download request received")
                 
                 elif 'Downloaded' in line and 'masters' in line and 'products' in line:
@@ -310,15 +486,15 @@ class SyncServiceRunner:
                     parts = line.split('master today: ')[1].split('  detail today: ')
                     master_before = parts[0] if len(parts) > 1 else '?'
                     detail_before = parts[1] if len(parts) > 1 else '?'
-                    print(f"🗄️  DB-BEFORE [{timestamp}]: Masters: {master_before} | Details: {detail_before}")
+                    print(f"🗄️ DB-BEFORE [{timestamp}]: Masters: {master_before} | Details: {detail_before}")
                 
                 elif 'AFTER –' in line and 'master today:' in line:
                     parts = line.split('master today: ')[1].split('  detail today: ')
                     master_after = parts[0] if len(parts) > 1 else '?'
                     detail_after = parts[1] if len(parts) > 1 else '?'
-                    print(f"🗄️  DB-AFTER [{timestamp}]: Masters: {master_after} | Details: {detail_after}")
+                    print(f"🗄️ DB-AFTER [{timestamp}]: Masters: {master_after} | Details: {detail_after}")
                 
-                elif '✅ COMMITTED –' in line or '\\u2705 COMMITTED' in line:
+                elif 'COMMITTED –' in line or 'u2705 COMMITTED' in line:
                     success_count += 1
                     try:
                         parts = line.split('master today: ')[1].split('  detail today: ')
@@ -340,7 +516,7 @@ class SyncServiceRunner:
                     print(f"🔌 DB [{timestamp}]: Database connection successful")
                 
                 # HTTP Requests with Status Codes
-                elif '"GET' in line or '"POST' in line:
+                elif '"GET' in line or '"POST' in line or '"PUT' in line or '"DELETE' in line:
                     request_count += 1
                     
                     method, endpoint, status_code = self.parse_http_status(line)
@@ -351,9 +527,37 @@ class SyncServiceRunner:
                             status_emoji = "✅"
                             status_text = "SUCCESS"
                             success_count += 1
+                        elif status_code == 201:
+                            status_emoji = "✅"
+                            status_text = "CREATED"
+                            success_count += 1
+                        elif status_code == 400:
+                            status_emoji = "⚠️"
+                            status_text = "BAD REQUEST"
+                            error_count += 1
+                        elif status_code == 401:
+                            status_emoji = "🔒"
+                            status_text = "UNAUTHORIZED"
+                            error_count += 1
+                        elif status_code == 403:
+                            status_emoji = "🚫"
+                            status_text = "FORBIDDEN"
+                            error_count += 1
+                        elif status_code == 404:
+                            status_emoji = "❓"
+                            status_text = "NOT FOUND"
+                            error_count += 1
+                        elif status_code == 405:
+                            status_emoji = "⛔"
+                            status_text = "METHOD NOT ALLOWED"
+                            error_count += 1
                         elif 400 <= status_code < 500:
                             status_emoji = "⚠️"
                             status_text = "CLIENT ERROR"
+                            error_count += 1
+                        elif status_code == 500:
+                            status_emoji = "💥"
+                            status_text = "INTERNAL ERROR"
                             error_count += 1
                         elif status_code >= 500:
                             status_emoji = "❌"
@@ -367,56 +571,106 @@ class SyncServiceRunner:
                         status_text = "HTTP"
                         status_code = "Unknown"
                     
-                    # Display formatted HTTP request
-                    if '/status' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: Status Check - {method} → {status_code}")
+                    # Display formatted HTTP request with specific URL pattern matching
+                    if 'status' in endpoint or '/status' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: STATUS CHECK - {method} /status → {status_code}")
                         if status_code == 200:
                             print(f"   ✅ Server status retrieved successfully!")
-                    elif '/pair-check' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: Device Pairing - {method} → {status_code}")
+                        elif status_code >= 500:
+                            print(f"   💥 Status check failed - Server error!")
+                    elif 'pair-check' in endpoint or '/pair-check' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: PAIR CHECK - {method} /pair-check → {status_code}")
                         if status_code == 200:
                             print(f"   🔗 Device pairing successful!")
-                    elif '/login' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: User Login - {method} → {status_code}")
+                        elif status_code == 400:
+                            print(f"   ⚠️ Invalid pairing request!")
+                        elif status_code >= 500:
+                            print(f"   💥 Pairing failed - Server error!")
+                    elif 'login' in endpoint or '/login' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: LOGIN - {method} /login → {status_code}")
                         if status_code == 200:
                             print(f"   🎉 Login authentication successful!")
                         elif status_code == 401:
                             print(f"   🔒 Login failed - Invalid credentials!")
-                    elif '/upload-orders' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: Order Upload - {method} → {status_code}")
-                        if status_code == 200:
-                            print(f"   📦 Orders successfully saved to database!")
-                        elif isinstance(status_code, int) and status_code >= 400:
-                            print(f"   💥 Order upload failed!")
-                    elif '/data-download' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: Data Download - {method} → {status_code}")
-                        if status_code == 200:
-                            print(f"   📥 Data downloaded successfully!")
-                    elif '/verify-token' in line:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: Token Verification - {method} → {status_code}")
+                        elif status_code == 400:
+                            print(f"   ⚠️ Bad login request!")
+                        elif status_code >= 500:
+                            print(f"   💥 Login failed - Server error!")
+                    elif 'verify-token' in endpoint or '/verify-token' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: TOKEN VERIFY - {method} /verify-token → {status_code}")
                         if status_code == 200:
                             print(f"   🔐 Token is valid!")
                         elif status_code == 401:
                             print(f"   🚫 Token expired or invalid!")
+                        elif status_code == 400:
+                            print(f"   ⚠️ Invalid token format!")
+                        elif status_code >= 500:
+                            print(f"   💥 Token verification failed - Server error!")
+                    elif 'data-download' in endpoint or '/data-download' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: DATA DOWNLOAD - {method} /data-download → {status_code}")
+                        if status_code == 200:
+                            print(f"   📥 Data downloaded successfully!")
+                        elif status_code == 401:
+                            print(f"   🔒 Download unauthorized!")
+                        elif status_code == 404:
+                            print(f"   ❓ Data not found!")
+                        elif status_code >= 500:
+                            print(f"   💥 Download failed - Server error!")
+                    elif 'upload-orders' in endpoint or '/upload-orders' in line:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: UPLOAD ORDERS - {method} /upload-orders → {status_code}")
+                        if status_code == 200:
+                            print(f"   📦 Orders successfully saved to database!")
+                        elif status_code == 201:
+                            print(f"   📦 Orders created successfully!")
+                        elif status_code == 400:
+                            print(f"   ⚠️ Invalid order data!")
+                        elif status_code == 401:
+                            print(f"   🔒 Upload unauthorized!")
+                        elif status_code >= 500:
+                            print(f"   💥 Order upload failed - Server error!")
+                    elif endpoint == '/' or '/admin' in endpoint:
+                        print(f"{status_emoji} {status_text} [{timestamp}]: WEB ACCESS - {method} {endpoint} → {status_code}")
+                        if status_code == 200:
+                            print(f"   🌐 Page loaded successfully!")
+                        elif status_code == 404:
+                            print(f"   ❓ Page not found!")
+                        elif status_code >= 500:
+                            print(f"   💥 Page load failed - Server error!")
                     else:
-                        print(f"{status_emoji} {status_text} [{timestamp}]: {method} {endpoint} → {status_code}")
+                        print(f"{status_emoji} {status_text} [{timestamp}]: HTTP REQUEST - {method} {endpoint} → {status_code}")
+                        if status_code == 200:
+                            print(f"   ✅ Request successful!")
+                        elif status_code >= 400 and status_code < 500:
+                            print(f"   ⚠️ Client error!")
+                        elif status_code >= 500:
+                            print(f"   💥 Server error!")
+                
+                # Django startup messages
+                elif 'Starting development server' in line:
+                    print(f"🚀 DJANGO [{timestamp}]: Development server starting...")
+                elif 'Watching for file changes' in line:
+                    print(f"👁️ DJANGO [{timestamp}]: File watcher active")
+                elif 'Quit the server with CONTROL-C' in line:
+                    print(f"✅ DJANGO [{timestamp}]: Server ready - Press Ctrl+C to stop")
                 
                 # Errors and Exceptions
                 elif any(word in line.lower() for word in ['error', 'exception', 'failed', 'rollback']):
                     error_count += 1
                     if 'ROLLBACK' in line:
                         print(f"❌ ERROR [{timestamp}]: Database transaction rolled back!")
-                        print(f"   ⚠️  {line}")
+                        print(f"   ⚠️ {line}")
                     else:
                         print(f"❌ ERROR [{timestamp}]: {line}")
                 
-                # Keep all the detailed INFO messages as requested
-                elif not any(skip in line for skip in ['Watching for file changes', 'StatReloader']):
-                    print(f"ℹ️  INFO [{timestamp}]: {line}")
+                # Skip Django debug messages but keep application info
+                elif not any(skip in line for skip in ['StatReloader', 'autoreload']):
+                    # Only show non-empty, meaningful lines
+                    if len(line.strip()) > 0:
+                        print(f"ℹ️ INFO [{timestamp}]: {line}")
                 
-                # Print statistics every 15 operations
+                # Print statistics every 20 operations
                 total_operations = success_count + error_count + request_count + login_count + upload_count + pair_count
-                if total_operations > 0 and total_operations % 20 == 0:
+                if total_operations > 0 and total_operations % 25 == 0:
                     self.print_detailed_statistics(success_count, error_count, request_count, login_count, upload_count, pair_count, db_operations)
                     
         except Exception as e:
@@ -435,7 +689,7 @@ class SyncServiceRunner:
         print(f"👤 Login Attempts: {login_count}")
         print(f"📤 Order Uploads: {upload_count}")
         print(f"🔗 Device Pairings: {pair_count}")
-        print(f"🗄️  Database Operations: {db_operations}")
+        print(f"🗄️ Database Operations: {db_operations}")
         print("-" * 80)
         total_ops = success_count + error_count + request_count
         if total_ops > 0:
@@ -462,7 +716,7 @@ class SyncServiceRunner:
                 self.django_process.wait(timeout=5)
                 print("✅ Django server stopped")
             except subprocess.TimeoutExpired:
-                print("⚠️  Force killing Django server...")
+                print("⚠️ Force killing Django server...")
                 self.django_process.kill()
                 self.django_process.wait()
         
@@ -477,6 +731,9 @@ class SyncServiceRunner:
             
             # Check prerequisites
             if not self.check_prerequisites():
+                print("\n💡 Tips:")
+                print("   - Make sure all project files are in the correct location")
+                print("   - Check that your Django project structure is intact")
                 input("\nPress Enter to exit...")
                 return
             
@@ -485,11 +742,16 @@ class SyncServiceRunner:
             
             # Start Django server
             if not self.start_django_server():
+                print("\n💡 Troubleshooting:")
+                print("   - Check if the port is already in use")
+                print("   - Verify Django is properly installed")
+                print("   - Make sure manage.py is executable")
                 input("\nPress Enter to exit...")
                 return
             
             print("🎯 SyncService is now running!")
             print("💡 Press Ctrl+C to stop the service")
+            print("🌐 Access your application in a web browser using the URLs above")
             print("=" * 60)
             
             # Monitor Django output
@@ -505,12 +767,25 @@ class SyncServiceRunner:
             self.shutdown()
 
 def main():
-    """Main entry point"""
+    """Main entry point with auto-setup"""
     try:
+        # First, check and setup the environment
+        if __name__ == "__main__":
+            python_exe = check_and_setup_environment()
+            
+            # Re-run the script with the virtual environment Python if needed
+            if sys.executable != python_exe:
+                print("🔄 Switching to virtual environment...")
+                subprocess.run([python_exe, __file__] + sys.argv[1:])
+                sys.exit(0)
+        
+        # Initialize and run the service
         runner = SyncServiceRunner()
         runner.run()
+        
     except Exception as e:
         print(f"❌ Fatal error: {e}")
+        print("💡 Please check the error message above and try again")
         input("\nPress Enter to exit...")
 
 if __name__ == "__main__":
