@@ -70,8 +70,13 @@ WSGI_APPLICATION = "django_sync.wsgi.application"
 
 # ---------- DATABASE (SQL Anywhere via DSN – no ORM) ----------
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.dummy"     # we use raw sqlanydb
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'magicpda',
+        'USER': 'postgres',
+        'PASSWORD': 'sajith@2003',
+        'HOST': 'localhost',   # or your server IP
+        'PORT': '5432',
     }
 }
 
@@ -104,3 +109,8 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_HEADERS = ["*"]
 CORS_ALLOW_METHODS = ["*"]
+
+
+
+
+# gyuhbj
