@@ -1,4 +1,4 @@
-('C:\\Users\\thoma\\Desktop\\django_sync\\django_sync\\build\\SyncService\\PYZ-00.pyz',
+('C:\\Users\\thoma\\Desktop\\MAGIC_PDA_DJANGO\\build\\SyncService\\PYZ-00.pyz',
  [('_compat_pickle',
    'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\_compat_pickle.py',
    'PYMODULE'),

@@ -338,11 +338,24 @@ class SyncServiceRunner:
                 bufsize=1
             )
             
-            print(f"✅ Django server started (PID: {self.django_process.pid})")
             print(f"🌐 Server URLs:")
-            for ip_addr in self.config.get('all_ips', [ip]):
-                print(f"   📡 http://{ip_addr}:{port}")
-            print("-" * 60)
+            # Don't show 0.0.0.0 as it's not a valid URL
+            if ip == "0.0.0.0":
+                print(f"   📡 http://localhost:{port}")
+                # Try to get actual IP
+                import socket
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    actual_ip = s.getsockname()[0]
+                    s.close()
+                    print(f"   📡 http://{actual_ip}:{port}")
+                except:
+                    pass
+            else:
+                for ip_addr in self.config.get('all_ips', [ip]):
+                    print(f"   📡 http://{ip_addr}:{port}")
+
             
             return True
             
