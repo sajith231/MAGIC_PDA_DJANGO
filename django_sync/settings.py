@@ -69,16 +69,25 @@ TEMPLATES = [
 WSGI_APPLICATION = "django_sync.wsgi.application"
 
 # ---------- DATABASE (SQL Anywhere via DSN – no ORM) ----------
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'magicpda',
+#         'USER': 'postgres',
+#         'PASSWORD': 'sajith@2003',
+#         'HOST': 'localhost',   # or your server IP
+#         'PORT': '5432',
+#     }
+# }
+
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'magicpda',
-        'USER': 'postgres',
-        'PASSWORD': 'sajith@2003',
-        'HOST': 'localhost',   # or your server IP
-        'PORT': '5432',
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / "db.sqlite3",
     }
 }
+
 
 # ---------- AUTH ----------
 AUTH_PASSWORD_VALIDATORS = [
