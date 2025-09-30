@@ -313,3 +313,96 @@ def get_status(request):
             ]
         }
     })
+
+
+
+
+
+@jwt_required
+@require_http_methods(["GET"])
+def get_product_details(request):
+    """
+    Returns combined product details from acc_product and acc_productbatch tables
+    joined on code = productcode
+    """
+    logging.info("📦 Product details request")
+    
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Join both tables on code = productcode
+        cur.execute("""
+            SELECT 
+                p.code,
+                p.name,
+                p.catagory,
+                p.product,
+                p.brand,
+                p.unit,
+                p.taxcode,
+                pb.productcode,
+                pb.barcode,
+                pb.quantity,
+                pb.cost,
+                pb.bmrp,
+                pb.salesprice,
+                pb.secondprice,
+                pb.thirdprice,
+                pb.supplier,
+                pb.expirydate
+            FROM acc_product p
+            LEFT JOIN acc_productbatch pb ON p.code = pb.productcode
+            ORDER BY p.code
+        """)
+        
+        rows = cur.fetchall()
+        
+        # Format the data
+        product_details = []
+        for row in rows:
+            # Handle expirydate - could be date object or string
+            expiry = row[16]
+            if expiry:
+                if hasattr(expiry, 'isoformat'):
+                    expiry = expiry.isoformat()
+                else:
+                    expiry = str(expiry)
+            
+            product_details.append({
+                "code": row[0],
+                "name": row[1],
+                "catagory": row[2],
+                "product": row[3],
+                "brand": row[4],
+                "unit": row[5],
+                "taxcode": row[6],
+                "productcode": row[7],
+                "barcode": row[8],
+                "quantity": float(row[9]) if row[9] is not None else None,
+                "cost": float(row[10]) if row[10] is not None else None,
+                "bmrp": float(row[11]) if row[11] is not None else None,
+                "salesprice": float(row[12]) if row[12] is not None else None,
+                "secondprice": float(row[13]) if row[13] is not None else None,
+                "thirdprice": float(row[14]) if row[14] is not None else None,
+                "supplier": row[15],
+                "expirydate": expiry
+            })
+        
+        cur.close()
+        conn.close()
+        
+        logging.info("✅ Retrieved %s product details", len(product_details))
+        return JsonResponse({
+            "status": "success",
+            "count": len(product_details),
+            "data": product_details
+        })
+        
+    except Exception as e:
+        logging.error("❌ Error fetching product details: %s", e)
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+        return JsonResponse({"detail": f"Failed to fetch product details: {e}"}, status=500)
