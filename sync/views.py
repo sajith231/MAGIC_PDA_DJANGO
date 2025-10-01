@@ -211,7 +211,7 @@ def upload_orders(request):
             userid    = order.get("userid") or request.userid
             otype     = order.get("otype", "O")
 
-            # 🔍 fix flat product → array
+            # 🔧 fix flat product → array
             products = order.get("products", [])
             if not products:                       # mobile sent flat fields
                 products = [{
@@ -241,13 +241,29 @@ def upload_orders(request):
                 qty  = float(prod["quantity"])
                 rate = float(prod["rate"])
                 mrp  = float(prod["mrp"])
+                barcode = prod["barcode"]
 
+                # 🆕 Get product code from barcode
+                cur.execute("""
+                    SELECT productcode 
+                    FROM acc_productbatch 
+                    WHERE barcode = ?
+                """, (barcode,))
+                product_row = cur.fetchone()
+                product_code = product_row[0] if product_row else None
+
+                if not product_code:
+                    logging.warning("⚠️ No product code found for barcode: %s", barcode)
+                    # You can either skip this item or use the barcode as fallback
+                    product_code = barcode  # fallback option
+
+                # 🆕 Updated INSERT with item field
                 sql = """
                     INSERT INTO acc_purchaseorderdetails
-                           (slno, masterslno, barcode, qty, rate, mrp)
-                    VALUES (?,    ?,          ?,       ?,  ?,    ?)
+                           (slno, masterslno, item, barcode, qty, rate, mrp)
+                    VALUES (?,    ?,          ?,    ?,       ?,   ?,    ?)
                 """
-                params = (det_slno, max_masterslno, prod["barcode"], qty, rate, mrp)
+                params = (det_slno, max_masterslno, product_code, barcode, qty, rate, mrp)
                 logging.info("EXEC detail sql=%s  params=%s", sql, params)
                 cur.execute(sql, params)
 
